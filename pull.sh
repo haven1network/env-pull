@@ -40,14 +40,15 @@ map_pull_remote_array() {
     PULL_ARRAY=("${!PULL_ARRAY_REF}")
 
     for PULL_ITEM in "${PULL_ARRAY[@]}"; do
+        RESULT="$PULL_ITEM"
         for REMOTE_ITEM in "${REMOTE_ARRAY[@]}"; do
             REMOTE_KEY="${REMOTE_ITEM%%=*}"
             REMOTE_VALUE="${REMOTE_ITEM#*=}"
             if [[ $RESULT == *"\${{$REMOTE_KEY}}"* ]]; then
-                echo $(echo "$RESULT" | sed "s/\${{$REMOTE_KEY}}/$REMOTE_VALUE/g")
-                break  # Break the inner loop
+                RESULT=$(echo "$RESULT" | sed "s/\${{$REMOTE_KEY}}/$REMOTE_VALUE/g")
             fi
         done
+        echo "$RESULT"
     done
 }
 
@@ -138,10 +139,9 @@ fi
 
 # Extract pull array data from .env.pull file
 PULL_ARRAY=()
-while IFS= read -r line; do
-    # trimmed=$(trim_string_brackets "$line")
-    trimmed="$(echo -e "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    if [ -n "$trimmed" ] && [[ "$trimmed" != "#"* ]]; then
+while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    if [[ -n "$trimmed" && "$trimmed" != \#* ]]; then
         PULL_ARRAY+=("$line")
     fi
 done < "$PULL_ENV_FILENAME"
@@ -160,8 +160,8 @@ for REPOSITORY_NAME in "${REPOSITORY_NAMES[@]}"; do
 
     echo "Extracting data from ${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}..."
     while IFS= read -r line; do
-        trimmed="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-        if [ -n "$trimmed" ] && [[ "$trimmed" != "#"* ]]; then
+        trimmed="${line#"${line%%[![:space:]]*}"}"
+        if [[ -n "$trimmed" && "$trimmed" != \#* ]]; then
             REMOTE_ARRAY+=("$REPOSITORY_NAME.$trimmed")
         fi
     done < "${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}"
