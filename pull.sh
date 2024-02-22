@@ -1,6 +1,6 @@
 # Function to extract a unique list of repositories inside .env.pull
 parse_repository_names() {
-    sed -n 's/.*\${{\([^}]*\)}}.*/\1/p' "$PULL_ENV_FILENAME" | awk -F '.' '{print $1}' | sort -u
+    echo $(grep -o '\${{[^}]*}}' $PULL_ENV_FILENAME | awk '{gsub(/[${}]/,""); split($0,a,"."); print a[1]}' | sort -u)
 }
 
 # Function to fetch a file from Haven1's GitHub repository
@@ -26,7 +26,7 @@ pull_remote_environment() {
 
     # Checking if the file was successfully pulled
     if [ ! -f "${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}" ]; then
-        echo "Error: Something went wrong, make sure the file  ${REPOSITORY_NAME}/${TARGET_ENV_FILENAME} exists and that your git account has access and retry."
+        echo "Error: Something went wrong, make sure the file ${REPOSITORY_NAME}/${TARGET_ENV_FILENAME} exists and that your git account has access and retry."
         exit 0
     fi
 }
@@ -43,9 +43,11 @@ map_pull_remote_array() {
         for REMOTE_ITEM in "${REMOTE_ARRAY[@]}"; do
             REMOTE_KEY="${REMOTE_ITEM%%=*}"
             REMOTE_VALUE="${REMOTE_ITEM#*=}"
-            RESULT=$(echo "$PULL_ITEM" | sed "s/\${{$REMOTE_KEY}}/$REMOTE_VALUE/g")
+            if [[ $RESULT == *"\${{$REMOTE_KEY}}"* ]]; then
+                echo $(echo "$RESULT" | sed "s/\${{$REMOTE_KEY}}/$REMOTE_VALUE/g")
+                break  # Break the inner loop
+            fi
         done
-        echo "$RESULT"
     done
 }
 
@@ -111,7 +113,7 @@ if [ -f "$ssh_config" ]; then
 
     if [ "${#identities[@]}" -gt 0 ]; then
         echo "SSH identities found for github.com:"
-        echo "0. Do not use any SSH identity (use HTTPS)"
+        echo "0. Use HTTPS"
 
         for ((i=0; i<"${#identities[@]}"; i++)); do
             echo "$((i+1)). ${identities[$i]}"
@@ -134,11 +136,6 @@ else
     CHOSEN_IDENTITY=""
 fi
 
-# Extract repository names from .env.pull file
-REPOSITORY_NAMES=$(parse_repository_names)
-REPOSITORY_COUNT=$(echo "$REPOSITORY_NAMES" | wc -l)
-echo "Found $REPOSITORY_COUNT repositories:\n${REPOSITORY_NAMES}\n"
-
 # Extract pull array data from .env.pull file
 PULL_ARRAY=()
 while IFS= read -r line; do
@@ -148,21 +145,29 @@ while IFS= read -r line; do
         PULL_ARRAY+=("$line")
     fi
 done < "$PULL_ENV_FILENAME"
-echo "Pull array:\n${PULL_ARRAY[@]}\n"
+echo "Extracted ${#PULL_ARRAY[@]} lines from $PULL_ENV_FILENAME"
+
+# Extract repository names from .env.pull file
+REPOSITORY_NAMES=($(parse_repository_names))
+echo "Found ${#REPOSITORY_NAMES[@]} repositories: ${REPOSITORY_NAMES[@]}"
 
 # Extract remote array data from respective repositories
 REMOTE_ARRAY=()
-while IFS= read -r REPOSITORY_NAME; do
-    echo "Downloading $REPOSITORY_NAME's .env.$ENVIRONMENT\n"
+for REPOSITORY_NAME in "${REPOSITORY_NAMES[@]}"; do
+    echo ""
+    echo "Downloading $REPOSITORY_NAME's .env.$ENVIRONMENT"
     pull_remote_environment "$REPOSITORY_NAME" "$CHOSEN_IDENTITY"
 
+    echo "Extracting data from ${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}..."
     while IFS= read -r line; do
         trimmed="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
         if [ -n "$trimmed" ] && [[ "$trimmed" != "#"* ]]; then
             REMOTE_ARRAY+=("$REPOSITORY_NAME.$trimmed")
         fi
     done < "${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}"
-done <<< "$REPOSITORY_NAMES"
+done
+echo ""
+echo "Extracted ${#REMOTE_ARRAY[@]} lines from ${#REPOSITORY_NAMES[@]} repositories"
 
 # Create array mapping between local env key and remote env value
 ARRAY_MAPPING=$(map_pull_remote_array REMOTE_ARRAY PULL_ARRAY)
@@ -178,6 +183,7 @@ for item in "${ARRAY_MAPPING[@]}"; do
     value="${item#*=}"
     update_local_environment "$var" "$value" > "$TARGET_ENV_FILENAME"
 done
+echo "Updated $TARGET_ENV_FILENAME"
 
 # Cleanup
 rm -rf "$TEMP_DIR"
