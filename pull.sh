@@ -8,6 +8,17 @@ pull_remote_environment() {
     REPOSITORY_NAME=$1
     CHOSEN_IDENTITY=$2
 
+    ENVIRONMENT="$DEFAULT_ENVIRONMENT"
+    for REPO in "${REPO_ENVS[@]}"; do
+        if [ "$REPO" = "$REPOSITORY_NAME" ]; then
+            ENVIRONMENT="$DEFAULT_OPPOSITE_ENVIRONMENT"
+            break
+        fi
+    done
+    ENV_FILENAME=".env.$ENVIRONMENT"
+
+    echo "Downloading $REPOSITORY_NAME's $ENV_FILENAME to $TARGET_ENV_FILENAME"
+
     REPOSITORY_URL="https://github.com/haven1network/${REPOSITORY_NAME}.git"
     if [ -n "$CHOSEN_IDENTITY" ]; then
         REPOSITORY_URL="git@github.com:haven1network/${REPOSITORY_NAME}.git"
@@ -21,13 +32,15 @@ pull_remote_environment() {
     git -C "${TEMP_DIR}/${REPOSITORY_NAME}" config core.sshCommand "ssh -i $CHOSEN_IDENTITY -F /dev/null"
     git -C "${TEMP_DIR}/${REPOSITORY_NAME}" remote add -f origin "${REPOSITORY_URL}" &> /dev/null
 
-    echo "${TARGET_ENV_FILENAME}" > "${TEMP_DIR}/${REPOSITORY_NAME}/.git/info/sparse-checkout"
-    git -C "${TEMP_DIR}/${REPOSITORY_NAME}" pull origin main &> /dev/null
+    echo "$ENV_FILENAME" > "${TEMP_DIR}/${REPOSITORY_NAME}/.git/info/sparse-checkout"
+    git -C "${TEMP_DIR}/${REPOSITORY_NAME}" pull origin main &> /dev/null 
 
     # Checking if the file was successfully pulled
-    if [ ! -f "${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}" ]; then
-        echo "Error: Something went wrong, make sure the file ${REPOSITORY_NAME}/${TARGET_ENV_FILENAME} exists and that your git account has access and retry."
+    if [ ! -f "${TEMP_DIR}/${REPOSITORY_NAME}/${ENV_FILENAME}" ]; then
+        echo "Error: Something went wrong, make sure the file ${REPOSITORY_NAME}/${ENV_FILENAME} exists and that your git account has access and retry."
         exit 0
+    else
+        mv ${TEMP_DIR}/${REPOSITORY_NAME}/${ENV_FILENAME} ${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}
     fi
 }
 
@@ -78,20 +91,42 @@ update_local_environment() {
 }
 
 # Check if the required arguments are provided
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 {staging|development}"
+if [ "$#" -lt 1 ]; then
+    echo "Usage 1: {staging|development}"
+    echo "Usage 2: {staging|development} {reponame1,reponame2..}"
+    echo "The first argument is what .env to pull from all repos (e.g. development) and the second (optional) argument is the list of repos that want the opposite environment (e.g. staging)"
     exit 1
 fi
 
+DEFAULT_ENVIRONMENT=$1
+REPO_ENVS=()
+if [ "$#" -gt 1 ]; then
+    # Input string
+    input_string="$2"
+
+    # Set the Internal Field Separator (IFS) to comma
+    IFS=',' read -r -a REPO_ENVS <<< "$input_string"
+
+    # Remove leading and trailing spaces from array elements
+    for ((i=0; i<${#REPO_OPPOSITE_ENVS[@]}; i++)); do
+        REPO_ENVS[$i]=$(echo "${REPO_ENVS[$i]}" | tr -d ' ')
+    done
+fi
+
 # Validate environment argument and construct file path
-ENVIRONMENT=$1
-if [ "${ENVIRONMENT}" == "staging" ]; then
+if [ "${DEFAULT_ENVIRONMENT}" == "staging" ]; then
+    DEFAULT_OPPOSITE_ENVIRONMENT="development"
     TARGET_ENV_FILENAME=".env.staging"
-elif [ "${ENVIRONMENT}" == "development" ]; then
+elif [ "${DEFAULT_ENVIRONMENT}" == "development" ]; then
+    DEFAULT_OPPOSITE_ENVIRONMENT="staging"
     TARGET_ENV_FILENAME=".env.development"
 else
     echo "Error: Invalid environment. Please specify either 'staging' or 'development'."
     exit 1
+fi
+
+if [ ${#REPO_ENVS[@]} -gt 0 ]; then
+    TARGET_ENV_FILENAME=".env.local"
 fi
 
 # Check if .env.pull file existed
@@ -155,7 +190,6 @@ echo "Found ${#REPOSITORY_NAMES[@]} repositories: ${REPOSITORY_NAMES[@]}"
 REMOTE_ARRAY=()
 for REPOSITORY_NAME in "${REPOSITORY_NAMES[@]}"; do
     echo ""
-    echo "Downloading $REPOSITORY_NAME's .env.$ENVIRONMENT"
     pull_remote_environment "$REPOSITORY_NAME" "$CHOSEN_IDENTITY"
 
     echo "Extracting data from ${TEMP_DIR}/${REPOSITORY_NAME}/${TARGET_ENV_FILENAME}..."
