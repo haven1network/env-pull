@@ -7,8 +7,6 @@ This repo contains the script used for environment control
 ./pull.sh development 
 ```
 
- it will try to pull data from the repos specified in the .env.pull
-
 ## 🚧 Deployment
 Commit the file to the main branch
 
